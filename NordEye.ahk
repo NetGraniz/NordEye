@@ -707,10 +707,14 @@ Cleanup(*) {
         DllCall("gdi32\DeleteObject", "Ptr", layer.bitmap)
         DllCall("gdi32\DeleteDC", "Ptr", layer.dc)
     }
-    if fontFamily
+    if fontFamily {
         DllCall("gdiplus\GdipDeleteFontFamily", "Ptr", fontFamily)
-    if gdipToken
-        DllCall("gdiplus\GdiplusShutdown", "Ptr", gdipToken)
+        fontFamily := 0
+    }
+    ; GDI+ is process-scoped here. Avoid GdiplusShutdown during OnExit:
+    ; it raises 0xC0000005 in the compiled programs on exit.
+    ; Windows reclaims the GDI+ runtime when the process terminates.
+    gdipToken := 0
 }
 
 #HotIf reminderActive
