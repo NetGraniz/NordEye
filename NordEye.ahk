@@ -12,15 +12,17 @@ global animationMode := 0      ; 0 hidden, 1 fade in, 2 fade out, 3 pulsing
 global animationStart := 0
 global animationFromAlpha := 0
 global displayAlpha := 0
+global lastAppliedAlpha := -1
 global reminderMinutes := 20
 global intervalIndex := 3
 global intervalValues := [5, 10, 20, 30, 45, 60]
-global intervalLabels := ["5 минут", "10 минут", "20 минут", "30 минут", "45 минут", "60 минут"]
+global intervalLabels := ["5 minutes", "10 minutes", "20 minutes", "30 minutes", "45 minutes", "60 minutes"]
 global overlays := []
 global menuOpen := false
 global menuGui := 0
 global menuPanel := 0
 global uiHeight := 332
+global hoverPart := ""
 global gdipToken := 0
 global fontFamily := 0
 
@@ -33,21 +35,25 @@ panel.OnEvent("Click", HandlePanelClick)
 main.OnEvent("Close", CloseApp)
 main.OnEvent("Escape", CloseMenu)
 OnMessage(0x0201, HandleMouseDown)
+OnMessage(0x0200, HandlePointerMove)
+OnMessage(0x02A3, HandlePointerLeave)
 
-A_IconTip := "NordEye — отдых для глаз"
+A_IconTip := "NordEye — Eye Rest Reminder"
 A_TrayMenu.Delete()
-A_TrayMenu.Add("Открыть NordEye", ShowApp)
+A_TrayMenu.Add("Open NordEye", ShowApp)
 A_TrayMenu.Add()
-A_TrayMenu.Add("Выход", (*) => ExitApp())
-A_TrayMenu.Default := "Открыть NordEye"
+A_TrayMenu.Add("Exit", (*) => ExitApp())
+A_TrayMenu.Default := "Open NordEye"
 A_TrayMenu.ClickCount := 1
 
 StartGraphics()
 CreateOverlays()
-main.Show("w432 h332")
+UpdateOverlays(0)  ; Prepare fully transparent layered windows BEFORE they are shown.
+main.Show("Hide w432 h332")
 RoundMain()
 DrawPanel()
 CreateDropdown()
+main.Show()
 OnExit Cleanup
 
 ; ------------ Interface ------------
@@ -61,61 +67,35 @@ StartGraphics() {
 }
 
 DrawPanel() {
-    global panel, intervalIndex, intervalLabels, running
-    ; Same window size as NordCursor: 432 x 332, without resizing for the menu.
-    w := 432, h := 332
+    global panel, intervalIndex, intervalLabels, running, hoverPart
     bitmap := 0, graphics := 0
-    DllCall("gdiplus\GdipCreateBitmapFromScan0", "Int", w, "Int", h, "Int", 0
+    DllCall("gdiplus\GdipCreateBitmapFromScan0", "Int", 432, "Int", 332, "Int", 0
         , "Int", 0x26200A, "Ptr", 0, "Ptr*", &bitmap)
     DllCall("gdiplus\GdipGetImageGraphicsContext", "Ptr", bitmap, "Ptr*", &graphics)
     DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", graphics, "Int", 4)
     DllCall("gdiplus\GdipSetTextRenderingHint", "Ptr", graphics, "Int", 4)
-    DllCall("gdiplus\GdipGraphicsClear", "Ptr", graphics, "UInt", 0xFF121B29)
+    DllCall("gdiplus\GdipGraphicsClear", "Ptr", graphics, "UInt", 0xFF101C2D)
 
-    ; Subtle multi-layer glow of the whole panel.
-    for idx, color in [0x0C77CFFF, 0x1668BDFF, 0x295D99D2] {
-        offset := 5 - idx
-        Outline(graphics, offset, offset, w - 2*offset, h - 2*offset, 16, color, 1.2)
-    }
-    Outline(graphics, 1, 1, w - 2, h - 2, 16, 0xFF314258, 1.1)
-    Outline(graphics, 2.5, 2.5, w - 5, h - 5, 16, 0x432787C3, 1.0)
+    DrawWindowShell(graphics)
+    EyeIcon(graphics, 29, 29, 0xFF19C8FC)
+    TextAt(graphics, "NordEye", 78, 21, 240, 39, 20.5, 0xFFE9F3FF, true)
+    Line(graphics, 364, 37, 374, 37, 0xFFA1B3CB, 1.6)
+    Line(graphics, 395, 32, 406, 43, 0xFFA1B3CB, 1.6)
+    Line(graphics, 406, 32, 395, 43, 0xFFA1B3CB, 1.6)
 
-    ; Title, status, minimize and close.
-    EyeIcon(graphics, 25, 28, 0xFF18C3F7)
-    TextAt(graphics, "NordEye", 72, 18, 230, 38, 21, 0xFFE9F4FF, true)
-    TextAt(graphics, running ? "АКТИВНО" : "ГОТОВ К ЗАПУСКУ", 72, 47, 235, 18, 9
-        , running ? 0xFF59DFAE : 0xFF7F94AD)
-    Line(graphics, 365, 35, 375, 35, 0xFF8498B1, 1.7)
-    Line(graphics, 398, 30, 408, 40, 0xFF8498B1, 1.7)
-    Line(graphics, 408, 30, 398, 40, 0xFF8498B1, 1.7)
+    DrawIconTile(graphics, 26, 103, 50, 50)
+    ClockIcon(graphics, 51, 128, 0xFFCADCF5)
+    TextAt(graphics, "Remind every", 93, 98, 287, 30, 14.2, 0xFFE9F3FF)
+    TextAt(graphics, "Eye rest interval", 93, 126, 285, 20, 10.8, 0xFF8199B9)
+    DrawControl(graphics, 93, 160, 309, 45, intervalLabels[intervalIndex], hoverPart = "interval")
 
-    ; A compact interval card and an actual rounded selector.
-    Rounded(graphics, 22, 88, 388, 142, 15, 0xFF172438, 0xFF2D4763, 1)
-    Outline(graphics, 24, 90, 384, 138, 14, 0x2447BFFF, 1)
-    Rounded(graphics, 39, 104, 44, 44, 12, 0xFF1E3149, 0xFF335477, 1)
-    ClockIcon(graphics, 61, 126, 0xFFC0D2EA)
-    TextAt(graphics, "Интервал", 96, 102, 282, 24, 16, 0xFFE6F2FF, true)
-    TextAt(graphics, "Напоминать каждые", 96, 126, 280, 22, 12, 0xFF869AB4)
-    Rounded(graphics, 39, 165, 354, 45, 11, 0xFF1D2B40, 0xFF37618B, 1.2)
-    Outline(graphics, 40.5, 166.5, 351, 42, 10, 0x3635C8F9, 1)
-    TextAt(graphics, intervalLabels[intervalIndex], 57, 168, 260, 39, 15, 0xFFE9F4FF)
-    Line(graphics, 359, 183, 365, 189, 0xFF9CB6D3, 2)
-    Line(graphics, 365, 189, 371, 183, 0xFF9CB6D3, 2)
-
-    ; Three buttons fit the exact 432 px width without squeezing labels.
-    Line(graphics, 22, 246, 410, 246, 0xFF2A3B52, 1)
-    Rounded(graphics, 22, 261, 142, 49, 11, 0xFF0EADE8, 0xFF32D9FF, 1.3)
-    Outline(graphics, 24, 263, 138, 45, 10, 0x652AF0FF, 1)
-    TextAt(graphics, running ? "✓ Запущено" : "▶ Запустить", 25, 263, 135, 45, 13, 0xFFFFFFFF, true, 1)
-    Rounded(graphics, 174, 261, 99, 49, 11, 0xFF213149, 0xFF344C68, 1.1)
-    Outline(graphics, 176, 263, 95, 45, 10, 0x252FAEF0, 1)
-    TextAt(graphics, "Ⅱ Пауза", 176, 263, 95, 45, 12.5, 0xFFD8E6F8, false, 1)
-    Rounded(graphics, 283, 261, 127, 49, 11, 0xFF213149, 0xFF344C68, 1.1)
-    Outline(graphics, 285, 263, 123, 45, 10, 0x252FAEF0, 1)
-    TextAt(graphics, "◉ Просмотр", 285, 263, 123, 45, 12.5, 0xFFD8E6F8, false, 1)
+    Line(graphics, 25, 233, 407, 233, 0xFF2B405B, 0.9)
+    DrawAction(graphics, 23, 256, 145, 54, running ? "Running" : "Start", "primary", hoverPart = "start")
+    DrawAction(graphics, 178, 256, 101, 54, "Pause", "secondary", hoverPart = "pause")
+    DrawAction(graphics, 289, 256, 120, 54, "Preview", "secondary", hoverPart = "preview")
 
     bitmapHandle := 0
-    DllCall("gdiplus\GdipCreateHBITMAPFromBitmap", "Ptr", bitmap, "Ptr*", &bitmapHandle, "UInt", 0xFF121B29)
+    DllCall("gdiplus\GdipCreateHBITMAPFromBitmap", "Ptr", bitmap, "Ptr*", &bitmapHandle, "UInt", 0xFF101C2D)
     panel.Value := "HBITMAP:*" bitmapHandle
     DllCall("gdi32\DeleteObject", "Ptr", bitmapHandle)
     DllCall("gdiplus\GdipDeleteGraphics", "Ptr", graphics)
@@ -127,14 +107,14 @@ DrawPanel() {
 ; Its image is prepared while hidden, avoiding an unpainted first frame.
 CreateDropdown() {
     global main, menuGui, menuPanel
-    menuGui := Gui("-Caption +ToolWindow -DPIScale +Owner" main.Hwnd " +E0x08000000", "Интервал")
+    menuGui := Gui("-Caption +ToolWindow -DPIScale +Owner" main.Hwnd " +E0x08000000", "Interval")
     menuGui.BackColor := "172638"
     menuGui.MarginX := 0
     menuGui.MarginY := 0
-    menuPanel := menuGui.AddPicture("x0 y0 w354 h196 +0x100")
+    menuPanel := menuGui.AddPicture("x0 y0 w309 h199 +0x100")
     menuPanel.OnEvent("Click", HandleMenuClick)
-    menuGui.Show("Hide w354 h196")
-    region := DllCall("gdi32\CreateRoundRectRgn", "Int", 0, "Int", 0, "Int", 355, "Int", 197, "Int", 24, "Int", 24, "Ptr")
+    menuGui.Show("Hide w309 h199")
+    region := DllCall("gdi32\CreateRoundRectRgn", "Int", 0, "Int", 0, "Int", 310, "Int", 200, "Int", 24, "Int", 24, "Ptr")
     DllCall("user32\SetWindowRgn", "Ptr", menuGui.Hwnd, "Ptr", region, "Int", 0)
     DrawDropdown()
 }
@@ -142,21 +122,24 @@ CreateDropdown() {
 DrawDropdown() {
     global menuPanel, intervalLabels, intervalIndex
     bitmap := 0, graphics := 0, bitmapHandle := 0
-    DllCall("gdiplus\GdipCreateBitmapFromScan0", "Int", 354, "Int", 196, "Int", 0
+    DllCall("gdiplus\GdipCreateBitmapFromScan0", "Int", 309, "Int", 199, "Int", 0
         , "Int", 0x26200A, "Ptr", 0, "Ptr*", &bitmap)
     DllCall("gdiplus\GdipGetImageGraphicsContext", "Ptr", bitmap, "Ptr*", &graphics)
     DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", graphics, "Int", 4)
     DllCall("gdiplus\GdipSetTextRenderingHint", "Ptr", graphics, "Int", 4)
-    DllCall("gdiplus\GdipGraphicsClear", "Ptr", graphics, "UInt", 0xFF172638)
-    Rounded(graphics, 1, 1, 352, 194, 12, 0xFF172638, 0xFF395776, 1.3)
+    DllCall("gdiplus\GdipGraphicsClear", "Ptr", graphics, "UInt", 0xFF192941)
+    GradientRounded(graphics, 0.5, 0.5, 308, 198, 12, 0xFF223750, 0xFF142238, 0xFF3C6689, 1.1)
+    Outline(graphics, 2, 2, 305, 195, 11, 0x2B49C9FF, 1)
     for idx, label in intervalLabels {
-        rowY := 7 + (idx - 1) * 30
+        rowY := 8 + (idx - 1) * 31
         if idx = intervalIndex
-            Rounded(graphics, 7, rowY, 340, 29, 7, 0xFF24445D, 0xFF3679A2, 1)
-        TextAt(graphics, label, 20, rowY, 280, 29, 13
-            , idx = intervalIndex ? 0xFF6DDEFF : 0xFFD4E4F6)
+            GradientRounded(graphics, 7, rowY, 295, 29, 7, 0xFF2D516F, 0xFF213C59, 0xFF3F8BB6, 1)
+        TextAt(graphics, label, 22, rowY, 240, 29, 13.2
+            , idx = intervalIndex ? 0xFF76DDFF : 0xFFE1EEFC)
+        if idx = intervalIndex
+            TextAt(graphics, "✓", 271, rowY, 22, 29, 12.5, 0xFF76DDFF, true, 1)
     }
-    DllCall("gdiplus\GdipCreateHBITMAPFromBitmap", "Ptr", bitmap, "Ptr*", &bitmapHandle, "UInt", 0xFF172638)
+    DllCall("gdiplus\GdipCreateHBITMAPFromBitmap", "Ptr", bitmap, "Ptr*", &bitmapHandle, "UInt", 0xFF192941)
     menuPanel.Value := "HBITMAP:*" bitmapHandle
     DllCall("gdi32\DeleteObject", "Ptr", bitmapHandle)
     DllCall("gdiplus\GdipDeleteGraphics", "Ptr", graphics)
@@ -169,7 +152,7 @@ OpenMenu() {
         return
     menuOpen := true
     main.GetPos(&x, &y)
-    menuGui.Show("NA x" (x + 39) " y" (y + 211) " w354 h196")
+    menuGui.Show("NA x" (x + 93) " y" (y + 207) " w309 h199")
 }
 
 HandleMenuClick(*) {
@@ -178,8 +161,8 @@ HandleMenuClick(*) {
     DllCall("user32\GetCursorPos", "Ptr", point)
     DllCall("user32\ScreenToClient", "Ptr", menuGui.Hwnd, "Ptr", point)
     y := NumGet(point, 4, "Int")
-    if y >= 7 && y < 187 {
-        index := Floor((y - 7) / 30) + 1
+    if y >= 8 && y < 194 {
+        index := Floor((y - 8) / 31) + 1
         if index >= 1 && index <= 6 && index != intervalIndex {
             intervalIndex := index
             reminderMinutes := intervalValues[index]
@@ -190,6 +173,127 @@ HandleMenuClick(*) {
         }
     }
     CloseMenu()
+}
+
+; -------- Reference-matched GDI+ surfaces / controls --------
+
+GradientRounded(g, x, y, w, h, r, topColor, bottomColor, border := 0, thickness := 1) {
+    path := MakeRoundPath(x, y, w, h, r)
+    rect := Buffer(16, 0)
+    NumPut "Float", x, rect, 0
+    NumPut "Float", y, rect, 4
+    NumPut "Float", w, rect, 8
+    NumPut "Float", h, rect, 12
+    brush := 0
+    result := DllCall("gdiplus\GdipCreateLineBrushFromRect", "Ptr", rect
+        , "UInt", topColor, "UInt", bottomColor, "Int", 1, "Int", 0, "Ptr*", &brush)
+    if result || !brush
+        DllCall("gdiplus\GdipCreateSolidFill", "UInt", topColor, "Ptr*", &brush)
+    DllCall("gdiplus\GdipFillPath", "Ptr", g, "Ptr", brush, "Ptr", path)
+    DllCall("gdiplus\GdipDeleteBrush", "Ptr", brush)
+    if border
+        StrokePath(g, path, border, thickness)
+    DllCall("gdiplus\GdipDeletePath", "Ptr", path)
+}
+
+DrawWindowShell(g) {
+    ; An inset shadow + cold, thin rim (rather than a flat outline).
+    GradientRounded(g, 0, 0, 432, 332, 18, 0xFF17283E, 0xFF0D1727)
+    Outline(g, 0.8, 0.8, 430.4, 330.4, 18, 0x4D39BFFF, 2.4)
+    Outline(g, 1.5, 1.5, 429, 329, 18, 0xB13FA9ED, 1.05)
+    Outline(g, 3.8, 3.8, 424.4, 324.4, 16, 0x2149B7FF, 2)
+    Line(g, 23, 5, 408, 5, 0x193AB9F9, 1)
+}
+
+DrawIconTile(g, x, y, w := 43, h := 43) {
+    GradientRounded(g, x, y, w, h, 11, 0xFF233650, 0xFF18273D, 0xFF2C405C, 0.9)
+    Outline(g, x+1.4, y+1.4, w-2.8, h-2.8, 10, 0x1935B9F4, 1)
+}
+
+DrawControl(g, x, y, w, h, label, hot := false) {
+    if hot {
+        Outline(g, x-3, y-3, w+6, h+6, 13, 0x1F45CFFF, 2)
+        Outline(g, x-1.5, y-1.5, w+3, h+3, 12, 0x3C35CCFF, 1.5)
+    }
+    GradientRounded(g, x, y, w, h, 10, hot ? 0xFF263C57 : 0xFF213249
+        , hot ? 0xFF1B2E47 : 0xFF18283F, hot ? 0xFF4AABEF : 0xFF395A7F, 1.2)
+    Outline(g, x+1.8, y+1.8, w-3.6, h-3.6, 9, 0x2C2AAAF5, 0.85)
+    TextAt(g, label, x+15, y+1, w-52, h-2, 13.6, 0xFFE7F3FF)
+    ax := x + w - 25, ay := y + h/2
+    Line(g, ax-6, ay-3, ax, ay+3, 0xFFB3CBE6, 1.8)
+    Line(g, ax, ay+3, ax+6, ay-3, 0xFFB3CBE6, 1.8)
+}
+
+DrawAction(g, x, y, w, h, title, kind, hot := false) {
+    if kind = "primary" {
+        if hot {
+            Outline(g, x-3, y-3, w+6, h+6, 13, 0x3435DEFF, 2.5)
+            Outline(g, x-1.5, y-1.5, w+3, h+3, 12, 0x6341D8FF, 1.5)
+        }
+        GradientRounded(g, x, y, w, h, 11
+            , hot ? 0xFF4BE3FF : 0xFF21C5FA, hot ? 0xFF06A6F4 : 0xFF079CE7, 0xFF3DE7FF, 1.25)
+        Outline(g, x+1.7, y+1.7, w-3.4, h-3.4, 10, 0x7F97F4FF, 1)
+        color := 0xFFFFFFFF
+    } else {
+        if hot
+            Outline(g, x-2, y-2, w+4, h+4, 12, 0x3140C7FA, 1.8)
+        GradientRounded(g, x, y, w, h, 11
+            , hot ? 0xFF2A4261 : 0xFF26364F, hot ? 0xFF1C304A : 0xFF1C2B42
+            , hot ? 0xFF5087BB : 0xFF344E70, 1.1)
+        Outline(g, x+1.5, y+1.5, w-3, h-3, 10, 0x2535A8F4, 1)
+        color := 0xFFDAE7FA
+    }
+
+    fontSize := 13.4
+    iconBoxW := 26
+    gap := 10
+    textW := ApproxTextWidth(title, fontSize)
+    contentW := iconBoxW + gap + textW
+    contentLeft := x + Floor((w - contentW) / 2)
+    if contentLeft < x + 12
+        contentLeft := x + 12
+    iconCX := contentLeft + iconBoxW / 2
+    textX := contentLeft + iconBoxW + gap
+    textRectW := w - (textX - x) - 12
+
+    if title = "Start" || title = "Running" || title = "Resume" {
+        if title = "Running"
+            TextAt(g, "✓", iconCX - 10, y+1, 20, h-2, 16, color, true, 1)
+        else
+            TextAt(g, "▶", iconCX - 10, y+1, 20, h-2, 17, color, true, 1)
+    } else if title = "Preview" {
+        SmallEyeIcon(g, iconCX, y + h / 2, color)
+    } else {
+        Rounded(g, iconCX - 6, y+h/2-9, 4, 18, 2, color)
+        Rounded(g, iconCX + 3, y+h/2-9, 4, 18, 2, color)
+    }
+    TextAt(g, title, textX, y+1, textRectW, h-2, fontSize, color)
+}
+
+ApproxTextWidth(text, size) {
+    return Ceil(StrLen(text) * size * 0.58)
+}
+
+SmallEyeIcon(g, x, y, color) {
+    pen := 0
+    DllCall("gdiplus\GdipCreatePen1", "UInt", color, "Float", 2.2, "Int", 2, "Ptr*", &pen)
+    DllCall("gdiplus\GdipDrawBezier", "Ptr", g, "Ptr", pen
+        , "Float", x-12, "Float", y, "Float", x-6, "Float", y-9
+        , "Float", x+6, "Float", y-9, "Float", x+12, "Float", y)
+    DllCall("gdiplus\GdipDrawBezier", "Ptr", g, "Ptr", pen
+        , "Float", x-12, "Float", y, "Float", x-6, "Float", y+9
+        , "Float", x+6, "Float", y+9, "Float", x+12, "Float", y)
+    DllCall("gdiplus\GdipDrawEllipse", "Ptr", g, "Ptr", pen
+        , "Float", x-3.5, "Float", y-3.5, "Float", 7, "Float", 7)
+    DllCall("gdiplus\GdipDeletePen", "Ptr", pen)
+}
+
+TrackPointerLeave(hwnd) {
+    event := Buffer(A_PtrSize = 8 ? 24 : 16, 0)
+    NumPut "UInt", event.Size, event, 0
+    NumPut "UInt", 2, event, 4 ; TME_LEAVE
+    NumPut "Ptr", hwnd, event, 8
+    DllCall("user32\TrackMouseEvent", "Ptr", event)
 }
 
 Rounded(g, x, y, w, h, r, fill, border := 0, thickness := 1) {
@@ -255,15 +359,37 @@ TextAt(g, str, x, y, w, h, size, color, bold := false, center := 0) {
     DllCall("gdiplus\GdipDeleteFont", "Ptr", font)
 }
 
+; Filled, antialiased eye mark matching the NordEye visual reference.
+; All geometry is vector GDI+: no icon fonts or external assets required.
 EyeIcon(g, x, y, color) {
-    pen := 0
-    DllCall("gdiplus\GdipCreatePen1", "UInt", color, "Float", 3, "Int", 2, "Ptr*", &pen)
-    DllCall("gdiplus\GdipDrawBezier", "Ptr", g, "Ptr", pen, "Float", x, "Float", y+7
-        , "Float", x+11, "Float", y-4, "Float", x+28, "Float", y-4, "Float", x+40, "Float", y+7)
-    DllCall("gdiplus\GdipDrawBezier", "Ptr", g, "Ptr", pen, "Float", x, "Float", y+7
-        , "Float", x+11, "Float", y+19, "Float", x+28, "Float", y+19, "Float", x+40, "Float", y+7)
-    DllCall("gdiplus\GdipDrawEllipse", "Ptr", g, "Ptr", pen, "Float", x+15, "Float", y+1, "Float", 11, "Float", 11)
-    DllCall("gdiplus\GdipDeletePen", "Ptr", pen)
+    eyePath := 0, brush := 0
+    DllCall("gdiplus\GdipCreatePath", "Int", 0, "Ptr*", &eyePath)
+    ; Almond-shaped outer silhouette (42 x 23 px).
+    DllCall("gdiplus\GdipAddPathBezier", "Ptr", eyePath
+        , "Float", x, "Float", y+10.5
+        , "Float", x+10, "Float", y-2
+        , "Float", x+31, "Float", y-2
+        , "Float", x+42, "Float", y+10.5)
+    DllCall("gdiplus\GdipAddPathBezier", "Ptr", eyePath
+        , "Float", x+42, "Float", y+10.5
+        , "Float", x+31, "Float", y+23
+        , "Float", x+10, "Float", y+23
+        , "Float", x, "Float", y+10.5)
+    DllCall("gdiplus\GdipClosePathFigure", "Ptr", eyePath)
+    DllCall("gdiplus\GdipCreateSolidFill", "UInt", color, "Ptr*", &brush)
+    DllCall("gdiplus\GdipFillPath", "Ptr", g, "Ptr", brush, "Ptr", eyePath)
+    DllCall("gdiplus\GdipDeleteBrush", "Ptr", brush)
+    DllCall("gdiplus\GdipDeletePath", "Ptr", eyePath)
+
+    ; Deep navy iris, vibrant inner pupil and small highlight.
+    DllCall("gdiplus\GdipCreateSolidFill", "UInt", 0xFF10263E, "Ptr*", &brush)
+    DllCall("gdiplus\GdipFillEllipse", "Ptr", g, "Ptr", brush
+        , "Float", x+12.5, "Float", y+1, "Float", 17, "Float", 19)
+    DllCall("gdiplus\GdipDeleteBrush", "Ptr", brush)
+    DllCall("gdiplus\GdipCreateSolidFill", "UInt", 0xFF27D4FF, "Ptr*", &brush)
+    DllCall("gdiplus\GdipFillEllipse", "Ptr", g, "Ptr", brush
+        , "Float", x+18, "Float", y+7, "Float", 6.5, "Float", 7)
+    DllCall("gdiplus\GdipDeleteBrush", "Ptr", brush)
 }
 
 ClockIcon(g, x, y, color) {
@@ -296,17 +422,54 @@ HandleMouseDown(wParam, lParam, msg, hwnd) {
     }
 }
 
+HoverAt(x, y) {
+    if x >= 93 && x <= 402 && y >= 160 && y <= 205
+        return "interval"
+    if y >= 256 && y <= 310 {
+        if x >= 23 && x <= 168
+            return "start"
+        if x >= 178 && x <= 279
+            return "pause"
+        if x >= 289 && x <= 409
+            return "preview"
+    }
+    return ""
+}
+
+HandlePointerMove(wParam, lParam, msg, hwnd) {
+    global main, hoverPart
+    if DllCall("user32\GetAncestor", "Ptr", hwnd, "UInt", 2, "Ptr") != main.Hwnd
+        return
+    TrackPointerLeave(hwnd)
+    point := Buffer(8, 0)
+    DllCall("user32\GetCursorPos", "Ptr", point)
+    DllCall("user32\ScreenToClient", "Ptr", main.Hwnd, "Ptr", point)
+    hovered := HoverAt(NumGet(point, 0, "Int"), NumGet(point, 4, "Int"))
+    if hovered != hoverPart {
+        hoverPart := hovered
+        DrawPanel()
+    }
+}
+
+HandlePointerLeave(wParam, lParam, msg, hwnd) {
+    global main, hoverPart
+    if DllCall("user32\GetAncestor", "Ptr", hwnd, "UInt", 2, "Ptr") = main.Hwnd && hoverPart != "" {
+        hoverPart := ""
+        DrawPanel()
+    }
+}
+
 HandlePanelClick(*) {
     global main, menuOpen
     point := Buffer(8, 0)
     DllCall("user32\GetCursorPos", "Ptr", point)
     DllCall("user32\ScreenToClient", "Ptr", main.Hwnd, "Ptr", point)
     x := NumGet(point, 0, "Int"), y := NumGet(point, 4, "Int")
-    if y < 57 && x >= 386 {
+    if y < 58 && x >= 385 {
         CloseApp()
         return
     }
-    if y < 57 && x >= 351 {
+    if y < 58 && x >= 349 {
         CloseMenu()
         main.Minimize()
         return
@@ -315,14 +478,14 @@ HandlePanelClick(*) {
         CloseMenu()
         return
     }
-    if x >= 39 && x <= 393 && y >= 165 && y <= 210
+    if x >= 93 && x <= 402 && y >= 160 && y <= 205
         OpenMenu()
-    else if y >= 261 && y <= 310 {
-        if x >= 22 && x <= 164
+    else if y >= 256 && y <= 310 {
+        if x >= 23 && x <= 168
             StartReminder()
-        else if x >= 174 && x <= 273
+        else if x >= 178 && x <= 279
             PauseReminder()
-        else if x >= 283 && x <= 410
+        else if x >= 289 && x <= 409
             ShowReminder()
     }
 }
@@ -376,12 +539,14 @@ ShowReminder(*) {
         return
     reminderActive := true
     animationMode := 1
-    animationStart := A_TickCount
     displayAlpha := 0
+    ; The cached ARGB surface has already been uploaded with alpha=0 at startup.
+    ; Never show an uninitialized layered window: it may flash for one frame.
+    UpdateOverlays(0)
     for layer in overlays
         layer.gui.Show("NA")
-    UpdateOverlays(0)
-    SetTimer AnimateReminder, 33
+    animationStart := A_TickCount
+    SetTimer AnimateReminder, 16
 }
 
 HideReminder(*) {
@@ -391,7 +556,7 @@ HideReminder(*) {
     animationMode := 2
     animationStart := A_TickCount
     animationFromAlpha := displayAlpha
-    SetTimer AnimateReminder, 33
+    SetTimer AnimateReminder, 16
 }
 
 AnimateReminder(*) {
@@ -399,26 +564,35 @@ AnimateReminder(*) {
     elapsed := A_TickCount - animationStart
     switch animationMode {
         case 1:
-            portion := Min(1, elapsed / 500)
-            displayAlpha := Round(255 * (1 - (1 - portion)**3))
+            ; 1.2-second smoothstep: zero velocity at both ends, not a fast flash.
+            portion := Min(1, elapsed / 1200)
+            ease := portion * portion * (3 - 2 * portion)
+            displayAlpha := Round(255 * ease)
             if portion = 1 {
                 animationMode := 3
                 animationStart := A_TickCount
+                ; Pulse begins at its brightest point with zero velocity,
+                ; exactly where the fade-in ends. No 255 -> 214 jump.
             }
         case 2:
-            portion := Min(1, elapsed / 650)
-            displayAlpha := Round(animationFromAlpha * (1 - portion)**2)
+            portion := Min(1, elapsed / 800)
+            ease := portion * portion * (3 - 2 * portion)
+            displayAlpha := Round(animationFromAlpha * (1 - ease))
             if portion = 1 {
                 displayAlpha := 0
-                reminderActive := false
-                animationMode := 0
+                UpdateOverlays(0)
                 for layer in overlays
                     layer.gui.Hide()
+                reminderActive := false
+                animationMode := 0
                 SetTimer AnimateReminder, 0
+                return
             }
         case 3:
             phase := Mod(elapsed, 3400) / 3400
-            displayAlpha := Round(173 + 82 * (0.5 + 0.5 * Sin(6.283185307179586 * phase)))
+            displayAlpha := Round(173 + 82 * (0.5 + 0.5 * Cos(6.283185307179586 * phase)))
+        default:
+            return
     }
     UpdateOverlays(displayAlpha)
 }
@@ -511,13 +685,17 @@ BuildGradient(layer) {
 }
 
 UpdateOverlays(alpha) {
-    global overlays
+    global overlays, lastAppliedAlpha
+    ; Avoid pushing full monitor-sized bitmaps on frames with unchanged opacity.
+    if alpha = lastAppliedAlpha
+        return
     for layer in overlays {
         NumPut "UChar", alpha, layer.blend, 2
         DllCall("user32\UpdateLayeredWindow", "Ptr", layer.gui.Hwnd, "Ptr", 0
             , "Ptr", layer.pos, "Ptr", layer.size, "Ptr", layer.dc, "Ptr", layer.src
             , "UInt", 0, "Ptr", layer.blend, "UInt", 2)
     }
+    lastAppliedAlpha := alpha
 }
 
 Cleanup(*) {
