@@ -1,58 +1,39 @@
 # NordEye
 
-**NordEye** — компактное приложение для Windows, которое напоминает об отдыхе для глаз мягким голубым свечением по краям экранов. Работает на **AutoHotkey v2**, не требует Electron, браузера или внешних графических пакетов.
+NordEye is a compact Windows application that reminds you to rest your eyes by displaying a soft blue glow around the edges of every screen. It is written for AutoHotkey v2 and requires no Electron runtime, browser, or external graphics package.
 
 ![NordEye Preview](NordEye.png)
 
-## Возможности
+## Features
 
-- Интервал напоминаний: **5, 10, 20, 30, 45 или 60 минут**; по умолчанию — **20 минут**.
-- Полупрозрачный голубой *ambient glow* с плавным затуханием от края к центру (до **190 px**, с учётом размера монитора).
-- Мягкое появление (~0,5 с), пульсация (~3,4 с на цикл) и плавное исчезновение (~0,65 с).
-- Свечение **не исчезает по таймеру**: скрывается только после **Esc**.
-- Оверлей поверх остальных окон, без перехвата мыши; отдельная поверхность для **каждого подключённого монитора** на момент запуска.
-- Главное окно **432 × 332 px**, со скруглениями и голубыми обводками, **не закреплено поверх остальных окон**.
-- Управление из системного трея; при закрытии окна приложение продолжает работать.
+- Reminder intervals of 5, 10, 20, 30, 45, or 60 minutes; the default is 20 minutes.
+- A translucent ambient glow that fades from the screen edges toward the centre.
+- Smooth appearance, pulse, and dismissal animations.
+- The glow remains visible until you press **Esc**.
+- Click-through overlays for every monitor connected when the application starts.
+- A compact control window with system-tray support.
+- No duplicated overlay when a reminder is already visible.
 
-## Требования и запуск
+## Requirements and use
 
-1. Установите [AutoHotkey v2](https://www.autohotkey.com/).
-2. Сохраните `NordEye_Ambient_Glow.ahk` в удобную папку.
-3. Запустите `.ahk` двойным щелчком.
-4. Выберите интервал и нажмите **«Запустить»**.
+1. Install [AutoHotkey v2](https://www.autohotkey.com/).
+2. Download `NordEye_Ambient_Glow.ahk`.
+3. Double-click the script.
+4. Select an interval and choose **Start**.
 
-Всё приложение находится в одном скрипте. Отдельной установки зависимостей GDI+ не требуется: используется системный API Windows.
+The application uses the Windows GDI+ API. **Pause** disables future reminders, **Preview** displays the glow immediately, and **Esc** dismisses an active glow without stopping the schedule. Closing the control window hides it in the tray; use the tray's **Exit** command to stop the application completely.
 
-## Управление
+## Implementation notes
 
-| Элемент | Действие |
-| --- | --- |
-| **Интервал** | Выбирает период между напоминаниями. Смена интервала при работающем таймере задаёт новый период отсчёта. |
-| **Запустить** | Включает периодические напоминания; отсчёт начинается с нажатия. |
-| **Пауза** | Отключает будущие напоминания. Если свечение уже появилось, оно остаётся на экране до Esc. |
-| **Просмотр** | Показывает свечение немедленно, без ожидания интервала. |
-| **Esc** | Пока свечение активно, плавно скрывает его; приложение и расписание напоминаний не закрываются. |
-| **×** | Скрывает окно в трей; таймер продолжает работать. |
-| **—** | Сворачивает окно. |
-| **Трей → «Открыть NordEye»** | Возвращает окно на экран. |
-| **Трей → «Выход»** | Полностью завершает приложение. |
+Each monitor receives a transparent, non-activating layered window in click-through mode. NordEye prepares an ARGB edge-gradient image and animates its overall opacity through `UpdateLayeredWindow` rather than rebuilding the gradient on every frame.
 
-Повторное напоминание не создаёт второй оверлей, если предыдущий ещё виден. На время отображения свечения клавиша **Esc** перехватывается приложением; вне этого состояния сохраняет обычное поведение.
+Monitor changes are not detected while the application is running; restart it after connecting or disconnecting a display. Settings are not persisted between launches. The included `NordEye_Transparent.ico` is an optional design resource and is not assigned automatically. The repository contains source code only, not a standalone EXE.
 
-## Как устроено свечение
+## Files
 
-Для каждого монитора создаётся прозрачное, неактивируемое окно типа **layered window** с режимом *click-through*. В нём заранее формируется ARGB-изображение: более насыщенный голубой цвет у самой границы и плавное затухание до нуля к центру. При анимации меняется общая прозрачность через `UpdateLayeredWindow`, без постоянного полного пересчёта градиента. Яркость углов рассчитывается по расстоянию до ближайшего края, чтобы не складывать непрозрачность отдельных полос.
+- `NordEye_Ambient_Glow.ahk` — application source.
+- `NordEye.png` — documentation screenshot.
+- `NordEye_Transparent.ico` — optional icon.
+- `CHANGELOG.md` — confirmed release history.
 
-Отрисовка интерфейса выполняется средствами **GDI+**. Окно управления остаётся обычным окном Windows, а поверх других приложений отображается только экранное свечение.
-
-## Что следует знать
-
-- Подключение или отключение мониторов во время работы не пересоздаёт оверлеи: для применения новой конфигурации перезапустите программу.
-- При повторном нажатии «Запустить» периодический таймер начинает отсчёт заново.
-- Настройки не сохраняются между запусками: после перезапуска интервал снова равен 20 минутам, а таймер выключен.
-- Иконка `NordEye_Transparent.ico` доступна как отдельный ресурс дизайна, **но скрипт не назначает её автоматически** для трея или ярлыка.
-- Исходный `.ahk` требует AutoHotkey v2; готовый автономный `.exe` в комплект не входит.
-
-## Состав
-
-`NordEye_Ambient_Glow.ahk` — исходный код приложения; `README.md` — инструкция; `CHANGELOG.md` — история подтверждённых изменений. При необходимости добавьте `NordEye_Transparent.ico` для оформления сборки или ярлыка.
+Licensed under the MIT License. See [LICENSE.txt](LICENSE.txt).
